@@ -1,9 +1,15 @@
+import argparse
 import math
+
+import optuna
 import torch
 import numpy as np
 import gymnasium as gym
 from torch import nn
-from torch.distributions import Normal
+from tqdm import tqdm
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 
 class PolicyNetworkContinuousAction(nn.Module):
@@ -77,29 +83,31 @@ def make_env(env_name, seed):
 
 
 if __name__ == "__main__":
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument("--env", type=str, default="Ant-v4", help="Open AI gym environments")
+    argparser.add_argument("--seed", type=int, default=0, help="Random seed")
+    argparser.add_argument("--num_samples", type=int, default=100, help="Number of samples")
+    argparser.add_argument("--num_episodes", type=int, default=100, help="Number of episodes")
+    args = argparser.parse_args()
+
     # Set random seeds for reproducibility
-    seed = 0
+    seed = args.seed
     set_global_seeds(seed)
 
-    env_name = 'HalfCheetah-v4'
+    # Initialize environment
+    env_name = args.env
     env = make_env(env_name, seed)
 
     # Initialize hyperparameters
-    num_samples = 100
-    num_episodes = 100
-    max_episode_steps = 100
+    num_samples = args.num_samples
+    num_episodes = args.num_episodes
 
     # Initialize a random policy
     policy_net = PolicyNetworkContinuousAction(env)
 
-    # Collect reward sequences for the different policies
+    # Sample reward sequences for the different policies
     all_scores_per_param = []
-
-    # Loop over all parameters
-    for samp_num in range(num_samples):
-        if samp_num % max(1, num_samples // 10) == 0:
-            print(f"Sample {samp_num}/{num_samples}")
-
+    for samp_num in tqdm(range(num_samples)):
         # Generate parameter theta_i ~ p(theta) and set it to the policy
         # p(theta) is a normal distribution with mean 0 and variance 1
         policy_net.init_weights()
@@ -113,24 +121,44 @@ if __name__ == "__main__":
             obs, _ = env.reset()
             score = 0
             steps = 0
-            done = False
-            while not done:
+            terminated, truncated = False, False
+            while not terminated and not truncated:
                 action = policy_net.act(torch.tensor(obs, dtype=torch.float32))
                 action = np.clip(action, -1, 1)  # Ensure action is within bounds
-                obs, reward, done, _, _ = env.step(action)
+                obs, reward, terminated, truncated, _ = env.step(action)
                 score += reward
                 steps += 1
-                if steps > max_episode_steps:
-                    done = True
             score_episodes.append(score)
         score_episodes = np.array(score_episodes)
         all_scores_per_param.append(score_episodes)
 
     all_scores_per_param = np.array(all_scores_per_param)
+    all_mean_scores = all_scores_per_param.mean(axis=1)
 
-    # Approximate all p(r | theta_i) and calculate the POIC
-    temperature = 100
-    r_max = np.max(all_scores_per_param)
+    all_scores = all_scores_per_param.flatten()
+    r_max = all_scores.max()
+    r_min = all_mean_scores.min()
+    r_mean = all_scores.mean()
+
+    # Optimize temperature for POIC
+    def objective(trial):
+        temperature = trial.suggest_loguniform('temperature', 1e-4, 2e4)
+        p_o1 = np.exp((all_scores-r_max)/temperature).mean()
+        p_o1_ts = np.exp((all_scores_per_param-r_max)/temperature).mean(axis=1)
+        marginal = -p_o1*np.log(p_o1 + 1e-12) - (1-p_o1)*np.log(1-p_o1 + 1e-12)
+        conditional = np.mean(p_o1_ts*np.log(p_o1_ts + 1e-12) + (1-p_o1_ts)*np.log(1-p_o1_ts + 1e-12))
+        mutual_information = marginal + conditional
+
+        return mutual_information
+
+    study = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(seed=seed))
+    study.optimize(objective, n_trials=200)
+
+    # Approximate all p(r | theta_i) to calculate the POIC
+    trial = study.best_trial
+    temperature = trial.params['temperature']
+    logging.info(f"Temperature: {temperature}")
+    logging.info(f"Optimal mutual information: {trial.value}")
     p_1is = []
     for i in range(num_samples):
         sum = 0
@@ -152,4 +180,5 @@ if __name__ == "__main__":
 
     poic = poic_neg + poic_pos
 
-    print(f"POIC {env_name}, {num_samples} samples, {num_episodes} episodes: {poic}")
+    # Report the results
+    logging.info(f"POIC {env_name}, {num_samples} samples, {num_episodes} episodes: {poic}")
