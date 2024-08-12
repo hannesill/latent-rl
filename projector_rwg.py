@@ -21,7 +21,7 @@ def set_global_seeds(seed):
     torch.backends.cudnn.benchmark = False
 
 
-# TODO: Try out with CleanRL's env setup
+# TODO (for future): Try out with CleanRL's env setup
 def make_env(env_name, latent_dim, seed):
     env = gym.make(env_name)
     env = LatentContinuousActionWrapper(env, latent_dim)
