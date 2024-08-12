@@ -45,7 +45,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "HalfCheetah-v4"
     """the id of the environment"""
-    total_timesteps: int = 10000000
+    total_timesteps: int = 4000000
     """total timesteps of the experiments"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
@@ -109,7 +109,7 @@ def make_env(env_id, idx, capture_video, run_name, latent_space, gamma):
         # Add a latent action space if specified
         if latent_space > 0:
             env = LatentContinuousActionWrapper(env, latent_dim=latent_space)
-            env.set_projector_weights(torch.load(f"./projectors/best_projector_Ant-v4_100_10_4.pt"))
+            # env.set_projector_weights(torch.load(f"projectors/worst_projector_HalfCheetah-v4_2024-08-08_10-55-06_s50_e30_l4.pt"))
         return env
 
     return thunk
