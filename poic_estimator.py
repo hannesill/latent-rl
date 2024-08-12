@@ -22,7 +22,7 @@ class PolicyNetworkContinuousAction(nn.Module):
         activation_fn_d = {
             "tanh": torch.tanh,
             "linear": lambda x: x,
-            "relu": lambda x: np.maximum(0, x),
+            "relu": lambda x: torch.relu,
         }
         assert (act_fn in activation_fn_d.keys())
         self.act_fn = activation_fn_d[act_fn]
@@ -52,9 +52,9 @@ class PolicyNetworkContinuousAction(nn.Module):
         Initialize the weights of the neural network with a normal distribution
         :return: None
         """
-        nn.init.normal_(self.fc1.weight, mean=0.0, std=1)
-        nn.init.normal_(self.fc2.weight, mean=0.0, std=1)
-        nn.init.normal_(self.output_layer.weight, mean=0.0, std=1)
+        nn.init.normal_(self.fc1.weight, mean=0.0, std=0.1)
+        nn.init.normal_(self.fc2.weight, mean=0.0, std=0.1)
+        nn.init.normal_(self.output_layer.weight, mean=0.0, std=0.1)
         nn.init.constant_(self.fc1.bias, 0.0)
         nn.init.constant_(self.fc2.bias, 0.0)
         nn.init.constant_(self.output_layer.bias, 0.0)
@@ -80,30 +80,26 @@ class POICEstimator:
             self.policy_net.init_weights()
 
             # For each episode collect the cumulative reward (score)
-            score_episodes = []
+            returns_episodes = []
             for _ in range(self.num_episodes):
                 # Initialize the environment
                 obs, _ = self.env.reset()
-                score = 0
+                episodic_return = 0
                 steps = 0
                 terminated, truncated = False, False
                 while not terminated and not truncated:
                     action = self.policy_net.act(torch.tensor(obs, dtype=torch.float32))
-                    action = np.clip(action, -1, 1)  # Ensure action is within bounds
                     obs, reward, terminated, truncated, _ = self.env.step(action)
-                    score += reward
+                    episodic_return += reward
                     steps += 1
-                score_episodes.append(score)
-            score_episodes = np.array(score_episodes)
-            all_scores_per_param.append(score_episodes)
+                returns_episodes.append(episodic_return)
+            returns_episodes = np.array(returns_episodes)
+            all_scores_per_param.append(returns_episodes)
 
         all_scores_per_param = np.array(all_scores_per_param)
-        all_mean_scores = all_scores_per_param.mean(axis=1)
 
         all_scores = all_scores_per_param.flatten()
         r_max = all_scores.max()
-        r_min = all_mean_scores.min()
-        r_mean = all_scores.mean()
 
         # Optimize temperature for POIC
         def objective(trial):
